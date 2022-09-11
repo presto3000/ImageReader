@@ -1,2 +1,2 @@
-# ImagerReader
-ImagerReader
+# ImageReader
+ImageReader
