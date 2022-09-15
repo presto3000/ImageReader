@@ -11,6 +11,7 @@
 #include <set>
 #include <chrono>
 #include <thread>
+#include <future>
 
 #define sleep(x) Sleep(1000 * (x))
 #define PBSTR "||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||"
@@ -52,13 +53,17 @@ public:
 
 	RGB **ImagePtr = nullptr;
 
-	std::set<std::vector<unsigned char>> SetOfUniqueRGB;
-	std::vector<RGB> PixelsArray;
+	//std::vector<RGB> PixelsArray;
 	std::vector<RGB> LumPosPixelsArray;
+
+	std::map<std::pair<int, int>, unsigned char> myMapR;
+	std::map<std::pair<int, int>, unsigned char> myMapG;
+	std::map<std::pair<int, int>, unsigned char> myMapB;
 
 	void CountAllPixelsAndUniqeRGB();
 	void AddLuminancePositionAndSortArray();
 	void UpdatePixelsFromTheOrigin(PPMImage* ImageA, PPMImage* ImageB);
+	void SetUpdatedPixelRGBInCorrectPositions();
 
 private:
 	int Width = 0;
@@ -205,7 +210,7 @@ void PPMImage::AddLuminancePositionAndSortArray()
 			ImagePtr[i][j].y = i;
 			LumPosPixelsArray.push_back(ImagePtr[i][j]);
 		}
-		UpdateBar(i, Height);
+		//UpdateBar(i, Height);
 	}
 	// Sort the Luminance Values
 	std::sort(LumPosPixelsArray.begin(), LumPosPixelsArray.end(), [](const RGB& lhs, const RGB& rhs){ return lhs.luminanceValue < rhs.luminanceValue; });
@@ -216,12 +221,6 @@ void PPMImage::UpdatePixelsFromTheOrigin(PPMImage* A, PPMImage* B)
 	if (A == nullptr) return;
 	if (B == nullptr) return;
 
-	//std::map<std::pair<int, int>, unsigned char, unsigned char, unsigned char> myMap;
-	std::map<std::pair<int, int>, unsigned char> myMapR;
-	std::map<std::pair<int, int>, unsigned char> myMapG;
-	std::map<std::pair<int, int>, unsigned char> myMapB;
-
-	printf("\nSetting up Positions and Colors into the Map...It takes a min or two...\n");
 	for (int Pixel = 0; Pixel < A->LumPosPixelsArray.size(); ++Pixel)
 	{
 		// Setting Positions
@@ -232,6 +231,10 @@ void PPMImage::UpdatePixelsFromTheOrigin(PPMImage* A, PPMImage* B)
 		myMapG[std::make_pair(A->LumPosPixelsArray[Pixel].x, A->LumPosPixelsArray[Pixel].y)] = A->LumPosPixelsArray[Pixel].g;
 		myMapB[std::make_pair(A->LumPosPixelsArray[Pixel].x, A->LumPosPixelsArray[Pixel].y)] = A->LumPosPixelsArray[Pixel].b;
 	}
+
+}
+void PPMImage::SetUpdatedPixelRGBInCorrectPositions()
+{
 	// Set Updated Pixel RGB in Correct Positions
 	printf("Setting up Updated RGB Pixels in Correct Positions using the Map:\n");
 	for (int i = 0; i < Height; i++)
@@ -245,9 +248,9 @@ void PPMImage::UpdatePixelsFromTheOrigin(PPMImage* A, PPMImage* B)
 		UpdateBar(i, Height);
 	}
 }
-
 void PPMImage::CountAllPixelsAndUniqeRGB()
 {
+	std::set<std::vector<unsigned char>> SetOfUniqueRGB;
 	for (int i = 0; i < Height; i++)
 	{
 		for (int j = 0; j < Width; j++)
@@ -255,14 +258,13 @@ void PPMImage::CountAllPixelsAndUniqeRGB()
 			//PixelsArray.push_back(ImagePtr[i][j]);
 			SetOfUniqueRGB.insert({ ImagePtr[i][j].r, ImagePtr[i][j].g, ImagePtr[i][j].b });
 		}
-		UpdateBar(i, Height);
+		//UpdateBar(i, Height);
 	}
 	//printf("%s", "\nNumber Of All Pixels in Picture:\n");
 	//// Number Of Pixels
 	//std::cout << PixelsArray.size() << std::endl;
 
 	size_t const numUniqueElements = SetOfUniqueRGB.size();
-	printf("%s", "Number Of All Unique Colors:\n");
 	std::cout << numUniqueElements << std::endl;
 }
 
@@ -351,12 +353,12 @@ int main()
 {
 	Timer timer;
 	printf("====== IMAGE PAINTER 0.1 ======\n");
-	printf("In Solution directory we have Picture A and B.\nProgram creates Picture C using Pictue B as a base with picture's A colors\n");
+	printf("In Solution directory we have Picture A and B.\nProgram creates Picture C using Picture B as a base with picture's A colors\n");
 	//========================================================
 	// Load JPEG image
 	CImg<unsigned char> imA("obrazA.jpg");
 
-	printf("Loaded obrazA\n");
+	printf("obrazA Loaded\n");
 	// Save as PPMImage
 	imA.save("A.ppm");
 
@@ -365,7 +367,7 @@ int main()
 	// Load JPEG image
 	CImg<unsigned char> imB("obrazB.jpg");
 
-	printf("Loaded obrazB\n");
+	printf("obrazB Loaded\n");
 	// Save as PPMImage
 	imB.save("B.ppm");
 
@@ -383,10 +385,8 @@ int main()
 	PPMImage* PointerImageA = &PPMImageA;
 	PPMImage* PointerImageB = &PPMImageB;
 
-	if (PointerImageA == nullptr || PointerImageB == nullptr)
-	{
-		printf("One of the pointers to ImageA or ImageB is nullptr\n");
-	}
+	if (PointerImageA == nullptr || PointerImageB == nullptr) return 0;
+
 	if (!(PointerImageA->GetHeight() == PointerImageB->GetHeight() && PointerImageA->GetWidth() == PointerImageB->GetWidth()))
 	{
 		printf("Image Sizes are different! Resizing.\n");
@@ -406,33 +406,45 @@ int main()
 		PPMImageB.Save("ResultB.ppm");
 
 		printf("ResultB.ppm Resized\n");
+		printf("\n");
 	}
+
+	//================================================================================================================
+	//								ASYNC LOADING
+	//================================================================================================================
+	printf("Loading asynchronously:\n");
+	printf("Pixels of Picture A and B into Arrays and sorting by luminance each one...\n");
+	const auto result1 = std::async(std::launch::async, &PPMImage::AddLuminancePositionAndSortArray, &PPMImageA);
+	const auto result2 = std::async(std::launch::async, &PPMImage::AddLuminancePositionAndSortArray, &PPMImageB);
+	result1._Get_value();
+	result2._Get_value();
 
 	// With or Without Counting Pixels
 #if TurnOnOffCountingPixels
-	//========================================================
-	std::cout << "Counting unique colors of Picture A:" << std::endl;
-	PPMImageA.CountAllPixelsAndUniqeRGB();
-	std::cout << "Counting unique colors of Picture B:" << std::endl;
-	PPMImageB.CountAllPixelsAndUniqeRGB();
-
+	const auto result3 = std::async(std::launch::async, &PPMImage::CountAllPixelsAndUniqeRGB, &PPMImageA);
+	const auto result4 = std::async(std::launch::async, &PPMImage::CountAllPixelsAndUniqeRGB, &PPMImageB);
 #endif
-	printf("\nLoading Pixels into an Array and sorting by luminance Pic A:\n");
-	PPMImageA.AddLuminancePositionAndSortArray();
-	printf("\nLoading Pixels into an Array and sorting by luminance Pic B:\n");
-	PPMImageB.AddLuminancePositionAndSortArray();
 
-	PPMImageB.UpdatePixelsFromTheOrigin(PointerImageA, PointerImageB);
+	printf("Setting up Positions and Colors into the Map...It takes a min or two...\n");
+	const auto result5 = std::async(std::launch::async, &PPMImage::UpdatePixelsFromTheOrigin, &PPMImageB, PointerImageA, PointerImageB);
+	printf("Counting Unique Colors...\n");
+#if TurnOnOffCountingPixels
+	printf("\n");
+	printf("Number Of All Unique Colors of Picture A:\n");
+	result3._Get_value();
+	printf("Number Of All Unique Colors of Picture B:\n");
+	result4._Get_value();
+	printf("\n");
+#endif
+	result5._Get_value();
+	//================================================================================================================
 
+	PPMImageB.SetUpdatedPixelRGBInCorrectPositions();
 	printf("\nSaving Results...\n");
 	PPMImageA.Save("ResultA.ppm");
 	PPMImageB.Save("ResultB.ppm");
 	printf("\nResultA.PPMImage and ResultB.ppm Saved\n");
 	//========================================================
-	// Load PPMImage image
-	//CImg<unsigned char> PPMImagea("ResultA.PPMImage");
-	// Save as 
-	//PPMImagea.Save("ResultA.png");
 	// Load PPMImage image
 	CImg<unsigned char> PPMImageb("ResultB.ppm");
 	// Save as 
@@ -475,4 +487,3 @@ int main()
 
 	return 0;
 }
-
