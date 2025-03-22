@@ -5,485 +5,268 @@
 #include <iostream>
 #include <cmath>
 #include <vector>
-#include <stdio.h>
 #include <string>
 #include <map>
 #include <set>
 #include <chrono>
 #include <thread>
 #include <future>
+#include <algorithm>
+#include <filesystem>
 
-#define sleep(x) Sleep(1000 * (x))
-#define PBSTR "||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||"
-#define PBWidth 60
-#define TurnOnOffCountingPixels 1
+#define cimg_use_jpeg
+
 
 using namespace cimg_library;
+namespace fs = std::filesystem;
 
-void UpdateBar(int PercentDone, int MaxValue);
+// Progress bar function
+void ShowProgressBar(const std::string& taskName, int progress, int total) {
+    int barWidth = 50; // Width of the progress bar
+    float percentage = static_cast<float>(progress) / total;
+    int pos = static_cast<int>(barWidth * percentage);
 
-class PPMImage
-{
+    std::cout << "\r" << taskName << " [";
+    for (int i = 0; i < barWidth; ++i) {
+        if (i < pos) std::cout << "=";
+        else if (i == pos) std::cout << ">";
+        else std::cout << " ";
+    }
+    std::cout << "] " << int(percentage * 100.0) << "%";
+    std::cout.flush();
+    if (progress == total) std::cout << std::endl;
+}
+
+class PPMImage {
 public:
-	~PPMImage();
-	PPMImage() {}
-	
-	struct RGB
-	{
-		unsigned char r;
-		unsigned char g;
-		unsigned char b;
+    struct RGB {
+        unsigned char r, g, b;
+        float luminance;
+        int x, y;
+    };
 
-		float luminanceValue;
-		int x;
-		int y;
-	};
-	// Getters:
-	int GetWidth() const { return Width; }
-	int GetHeight() const { return Height; }
+    ~PPMImage() = default;
+    PPMImage() = default;
+    
+    void Save(const std::string& filename);
+    void Read(const std::string& filename);
+    void Resize(int newHeight, int newWidth);
+    void ComputeLuminanceAndSort();
+    void UpdatePixels(PPMImage* source, PPMImage* target);
+    void ApplyUpdatedPixels();
+    void CountUniqueColors();
 
-	// Save / Read
-	void Save(std::string FileName);
-	void Read(std::string FileName);
-
-	// Resize
-	void Resize(int Height, int Width);
-	// Delete Image
-	void DeleteImage();
-
-	RGB **ImagePtr = nullptr;
-
-	//std::vector<RGB> PixelsArray;
-	std::vector<RGB> LumPosPixelsArray;
-
-	std::map<std::pair<int, int>, unsigned char> myMapR;
-	std::map<std::pair<int, int>, unsigned char> myMapG;
-	std::map<std::pair<int, int>, unsigned char> myMapB;
-
-	void CountAllPixelsAndUniqeRGB();
-	void AddLuminancePositionAndSortArray();
-	void UpdatePixelsFromTheOrigin(PPMImage* ImageA, PPMImage* ImageB);
-	void SetUpdatedPixelRGBInCorrectPositions();
+    int GetWidth() const { return width; }
+    int GetHeight() const { return height; }
 
 private:
-	int Width = 0;
-	int Height = 0;
-	std::string Version = "P6";
+    int width = 0, height = 0;
+    std::string version = "P6";
+    std::vector<std::vector<RGB>> imageData;
+    std::vector<RGB> sortedPixels;
+    std::map<std::pair<int, int>, RGB> pixelMap;
 
-	void CreateImage();
+    void AllocateImage();
 };
 
-PPMImage::~PPMImage()
-{
-	DeleteImage();
+void PPMImage::Save(const std::string& filename) {
+    std::ofstream output(filename, std::ios::binary);
+    if (!output) return;
+
+    output << version << "\n" << width << " " << height << "\n255\n";
+    if (version == "P6") {
+        for (const auto& row : imageData) {
+            for (const auto& pixel : row) {
+                output.write(reinterpret_cast<const char*>(&pixel), 3);
+            }
+        }
+    }
+    output.close();
 }
 
-void PPMImage::Save(std::string FileName)
-{
-	std::ofstream output(FileName, std::ios::binary);
+void PPMImage::Read(const std::string& filename) {
+    std::ifstream input(filename, std::ios::binary);
+    if (!input) return;
+    
+    input >> version >> width >> height;
+    int maxVal;
+    input >> maxVal;
+    input.ignore();
+    
+    AllocateImage();
 
-	if (output.is_open())
-	{
-		output << Version << std::endl;
-		output << Width << std::endl;
-		output << Height << std::endl;
-		output << 255 << std::endl;
-
-		if (Version == "P3")
-		{
-			for (int i = 0; i < Height; i++)
-			{
-				for (int j = 0; j < Width; j++)
-				{
-					output << (int)ImagePtr[i][j].r << ' ';
-					output << (int)ImagePtr[i][j].g << ' ';
-					output << (int)ImagePtr[i][j].b << '\n';
-				}
-			}
-		}
-		else
-		{
-			for (int i = 0; i < Height; i++)
-			{
-				for (int j = 0; j < Width; j++)
-				{
-					output.write((char*) &ImagePtr[i][j], sizeof(RGB)-13);
-				}
-			}
-		}
-		output.close();
-	}
+    if (version == "P6") {
+        for (auto& row : imageData) {
+            for (auto& pixel : row) {
+                input.read(reinterpret_cast<char*>(&pixel), 3);
+            }
+        }
+    }
+    input.close();
 }
 
-void PPMImage::Read(std::string FileName)
-{
-	std::ifstream input(FileName, std::ios::binary);
-
-	if (input.is_open())
-	{
-		int color;
-		char ver[3];
-
-		input.read(ver, 3);
-		//string type = "";
-		//input >> type;
-		input >> Width;
-		input >> Height;
-		input >> color;
-
-		input.read(ver, 1);
-		//std::cout << ver[1] << std::endl;
-		
-		// Create Image
-		CreateImage();
-
-		int box;
-		if (Version == "P3")
-		{
-			for (int i = 0; i < Height; i++)
-			{
-				for (int j = 0; j < Width; j++)
-				{
-					input >> box;
-					ImagePtr[i][j].r = box;
-
-					input >> box;
-					ImagePtr[i][j].g = box;
-
-					input >> box;
-					ImagePtr[i][j].b = box;
-				}
-			}
-		}
-		else
-		{
-			for (int i = 0; i < Height; i++)
-			{
-				for (int j = 0; j < Width; j++)
-				{
-					input.read((char*) &ImagePtr[i][j], sizeof(RGB)-13);
-				}
-			}
-			input.close();
-		}
-	}
+void PPMImage::AllocateImage() {
+    imageData.resize(height, std::vector<RGB>(width, {255, 255, 255, 0, 0}));
 }
 
-
-void PPMImage::CreateImage()
-{
-	if (ImagePtr != nullptr)
-	{
-		DeleteImage();
-	}
-
-	ImagePtr = new RGB * [Height];
-
-	for (int i = 0; i < Height; i++)
-	{
-		ImagePtr[i] = new RGB[Width];
-
-		for (int j = 0; j < Width; j++)
-		{
-			ImagePtr[i][j].r = 255;
-			ImagePtr[i][j].g = 255;
-			ImagePtr[i][j].b = 255;
-		}
-	}
-
+void PPMImage::Resize(int newHeight, int newWidth) {
+    std::vector<std::vector<RGB>> resized(newHeight, std::vector<RGB>(newWidth));
+    for (int i = 0; i < newHeight; ++i) {
+        for (int j = 0; j < newWidth; ++j) {
+            resized[i][j] = imageData[i * height / newHeight][j * width / newWidth];
+        }
+    }
+    imageData = std::move(resized);
+    height = newHeight;
+    width = newWidth;
 }
 
-void PPMImage::AddLuminancePositionAndSortArray()
-{
-	const float r = 0.299f;
-	const float g = 0.587f;
-	const float b = 0.114f;
-	float LuminanceValue;
-
-	for (int i = 0; i < Height; i++)
-	{
-		for (int j = 0; j < Width; j++)
-		{
-			LuminanceValue = ImagePtr[i][j].r * r + ImagePtr[i][j].g * g + ImagePtr[i][j].b * b;
-			ImagePtr[i][j].luminanceValue = LuminanceValue;
-			ImagePtr[i][j].x = j;
-			ImagePtr[i][j].y = i;
-			LumPosPixelsArray.push_back(ImagePtr[i][j]);
-		}
-		//UpdateBar(i, Height);
-	}
-	// Sort the Luminance Values
-	std::sort(LumPosPixelsArray.begin(), LumPosPixelsArray.end(), [](const RGB& lhs, const RGB& rhs){ return lhs.luminanceValue < rhs.luminanceValue; });
+void PPMImage::ComputeLuminanceAndSort() {
+    sortedPixels.clear();
+    for (int i = 0; i < height; ++i) {
+        for (int j = 0; j < width; ++j) {
+            auto& pixel = imageData[i][j];
+            pixel.luminance = 0.299f * pixel.r + 0.587f * pixel.g + 0.114f * pixel.b;
+            pixel.x = j;
+            pixel.y = i;
+            sortedPixels.push_back(pixel);
+        }
+    }
+    std::stable_sort(sortedPixels.begin(), sortedPixels.end(), [](const RGB& a, const RGB& b) {
+        return a.luminance < b.luminance;
+    });
 }
 
-void PPMImage::UpdatePixelsFromTheOrigin(PPMImage* A, PPMImage* B)
-{
-	if (A == nullptr) return;
-	if (B == nullptr) return;
+void PPMImage::UpdatePixels(PPMImage* source, PPMImage* target) {
+    if (!source || !target) return;
 
-	for (int Pixel = 0; Pixel < A->LumPosPixelsArray.size(); ++Pixel)
-	{
-		// Setting Positions
-		A->LumPosPixelsArray[Pixel].x = B->LumPosPixelsArray[Pixel].x;
-		A->LumPosPixelsArray[Pixel].y = B->LumPosPixelsArray[Pixel].y;
-		// Setting Colors
-		myMapR[std::make_pair(A->LumPosPixelsArray[Pixel].x, A->LumPosPixelsArray[Pixel].y)] = A->LumPosPixelsArray[Pixel].r;
-		myMapG[std::make_pair(A->LumPosPixelsArray[Pixel].x, A->LumPosPixelsArray[Pixel].y)] = A->LumPosPixelsArray[Pixel].g;
-		myMapB[std::make_pair(A->LumPosPixelsArray[Pixel].x, A->LumPosPixelsArray[Pixel].y)] = A->LumPosPixelsArray[Pixel].b;
-	}
-
-}
-void PPMImage::SetUpdatedPixelRGBInCorrectPositions()
-{
-	// Set Updated Pixel RGB in Correct Positions
-	printf("Setting up Updated RGB Pixels in Correct Positions using the Map:\n");
-	for (int i = 0; i < Height; i++)
-	{
-		for (int j = 0; j < Width; j++)
-		{
-			ImagePtr[i][j].r = myMapR[std::make_pair(j, i)];
-			ImagePtr[i][j].g = myMapG[std::make_pair(j, i)];
-			ImagePtr[i][j].b = myMapB[std::make_pair(j, i)];
-		}
-		UpdateBar(i, Height);
-	}
-}
-void PPMImage::CountAllPixelsAndUniqeRGB()
-{
-	std::set<std::vector<unsigned char>> SetOfUniqueRGB;
-	for (int i = 0; i < Height; i++)
-	{
-		for (int j = 0; j < Width; j++)
-		{
-			//PixelsArray.push_back(ImagePtr[i][j]);
-			SetOfUniqueRGB.insert({ ImagePtr[i][j].r, ImagePtr[i][j].g, ImagePtr[i][j].b });
-		}
-		//UpdateBar(i, Height);
-	}
-	//printf("%s", "\nNumber Of All Pixels in Picture:\n");
-	//// Number Of Pixels
-	//std::cout << PixelsArray.size() << std::endl;
-
-	size_t const numUniqueElements = SetOfUniqueRGB.size();
-	std::cout << numUniqueElements << std::endl;
+    for (size_t i = 0; i < source->sortedPixels.size(); ++i) {
+        RGB& srcPixel = source->sortedPixels[i];
+        RGB& tgtPixel = target->sortedPixels[i];
+        
+        pixelMap[{tgtPixel.x, tgtPixel.y}] = {srcPixel.r, srcPixel.g, srcPixel.b};
+    }
 }
 
-void PPMImage::DeleteImage()
-{
-	if (ImagePtr != nullptr)
-	{
-		for (int i = 0; i < Height; i++)
-		{
-			delete ImagePtr[i];
-		}
-
-		delete ImagePtr;
-	}
+void PPMImage::ApplyUpdatedPixels() {
+    for (int i = 0; i < height; ++i) {
+        for (int j = 0; j < width; ++j) {
+            if (pixelMap.count({j, i})) {
+                imageData[i][j] = pixelMap[{j, i}];
+            }
+        }
+    }
 }
 
-void PPMImage::Resize(int Height, int Width)
-{
-	RGB	**ImageResized = new RGB*[Height];
-
-	for (int i = 0; i < Height; i++)
-	{
-		ImageResized[i] = new RGB[Width];
-		for (int j = 0; j < Width; j++)
-		{
-			ImageResized[i][j].r = 255;
-			ImageResized[i][j].g = 255;
-			ImageResized[i][j].b = 255;
-		}
-	}
-
-	for (int i = 0; i < Height; i++)
-	{
-		for (int j = 0; j < Width; j++)
-		{
-			ImageResized[i][j] = ImagePtr[i * this->Height / Height][j * this->Width / Width];
-		}
-	}
-	DeleteImage();
-	ImagePtr = ImageResized;
-
-	this->Height = Height;
-	this->Width = Width;
+void PPMImage::CountUniqueColors() {
+    std::set<std::tuple<unsigned char, unsigned char, unsigned char>> uniqueColors;
+    for (const auto& row : imageData) {
+        for (const auto& pixel : row) {
+            uniqueColors.insert({pixel.r, pixel.g, pixel.b});
+        }
+    }
+    std::cout << "Unique colors: " << uniqueColors.size() << std::endl;
 }
 
-const int PROG_BAR_LENGTH = 30;
+int main() {
+    auto start = std::chrono::high_resolution_clock::now();
+    
+    printf("====== IMAGE PAINTER 0.1 ======\n");
+    printf("In Solution directory we have Picture A and B.\nProgram creates Picture C using Picture B as a base with picture's A colors\n");
+    
+    //========================================================
+    // Load JPEG image
+    fs::path currentPath = fs::current_path(); // Get the current working directory
+    fs::path imagePathA = currentPath / "obrazA.jpg"; // Append the image file name for obrazA
+    fs::path imagePathB = currentPath / "obrazB.jpg"; // Append the image file name for obrazB
+    
+    std::cout << "Image path A: " << imagePathA << std::endl;
+    std::cout << "Image path B: " << imagePathB << std::endl;
 
-void UpdateBar(int PercentDone, int MaxValue)
-{
-	const int NumChars = PercentDone * PROG_BAR_LENGTH / MaxValue;
-	printf("\r[");
-	for (int i = 0; i < NumChars; i++)
-	{
-		printf("#");
-	}
-	for (int i = 0; i < PROG_BAR_LENGTH- NumChars; i++)
-	{
-		printf(" ");
-	}
-	const int PercentDoneShown = (PercentDone * 100) / MaxValue;
-	printf("] %d%% Done", PercentDoneShown);
-	fflush(stdout);
-	
-}
+    // Progress bar for loading images
+    ShowProgressBar("Loading Images", 0, 3);
 
-struct Timer
-{
-	std::chrono::time_point<std::chrono::steady_clock> start, end;
-	std::chrono::duration<float> duration;
+    try {
+        if (!fs::exists(imagePathA)) {
+            throw std::runtime_error("File 'obrazA.jpg' not found in the current directory.");
+        }
+        CImg<unsigned char> imA(imagePathA.string().c_str()); // Load the image
+        printf("obrazA Loaded\n");
+        // Save as PPMImage
+        imA.save("A.ppm");
+        printf("obrazA Saved as A.ppm\n");
+        ShowProgressBar("Loading Images", 1, 3);
+    } catch (const CImgIOException& e) {
+        std::cerr << "Error loading obrazA: " << e.what() << std::endl;
+        return 1;
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+        return 1;
+    }
+    
+    try {
+        if (!fs::exists(imagePathB)) {
+            throw std::runtime_error("File 'obrazB.jpg' not found in the current directory.");
+        }
+        CImg<unsigned char> imB(imagePathB.string().c_str()); // Load the image
+        printf("obrazB Loaded\n");
+        // Save as PPMImage
+        imB.save("B.ppm");
+        printf("obrazB Saved as B.ppm\n");
+        ShowProgressBar("Loading Images", 2, 3);
+    } catch (const CImgIOException& e) {
+        std::cerr << "Error loading obrazB: " << e.what() << std::endl;
+        return 1;
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+        return 1;
+    }
 
-	Timer()
-	{
-		start = std::chrono::high_resolution_clock::now();
-	}
+    ShowProgressBar("Loading Images", 3, 3);
 
-	~Timer()
-	{
-		end = std::chrono::high_resolution_clock::now();
-		duration = end - start;
+    PPMImage imgA, imgB;
+    imgA.Read("A.ppm");
+    imgB.Read("B.ppm");
 
-		float ms = duration.count() * 1000.f;
-		std::cout << "Program's execution took: " << ms << "ms" << std::endl;
-	}
-};
-int main()
-{
-	Timer timer;
-	printf("====== IMAGE PAINTER 0.1 ======\n");
-	printf("In Solution directory we have Picture A and B.\nProgram creates Picture C using Picture B as a base with picture's A colors\n");
-	//========================================================
-	// Load JPEG image
-	CImg<unsigned char> imA("obrazA.jpg");
+    if (imgA.GetHeight() != imgB.GetHeight() || imgA.GetWidth() != imgB.GetWidth()) {
+        imgB.Resize(imgA.GetHeight(), imgA.GetWidth());
+    }
 
-	printf("obrazA Loaded\n");
-	// Save as PPMImage
-	imA.save("A.ppm");
+    // Progress bar for processing images
+    ShowProgressBar("Processing Images", 0, 4);
 
-	printf("obrazA Saved as A.ppm\n");
+    auto task1 = std::async(std::launch::async, &PPMImage::ComputeLuminanceAndSort, &imgA);
+    auto task2 = std::async(std::launch::async, &PPMImage::ComputeLuminanceAndSort, &imgB);
+    task1.get();
+    ShowProgressBar("Processing Images", 1, 4);
+    task2.get();
+    ShowProgressBar("Processing Images", 2, 4);
 
-	// Load JPEG image
-	CImg<unsigned char> imB("obrazB.jpg");
+    auto task3 = std::async(std::launch::async, &PPMImage::CountUniqueColors, &imgA);
+    auto task4 = std::async(std::launch::async, &PPMImage::CountUniqueColors, &imgB);
+    task3.get();
+    ShowProgressBar("Processing Images", 3, 4);
+    task4.get();
+    ShowProgressBar("Processing Images", 4, 4);
 
-	printf("obrazB Loaded\n");
-	// Save as PPMImage
-	imB.save("B.ppm");
+    imgB.UpdatePixels(&imgA, &imgB);
+    imgB.ApplyUpdatedPixels();
 
-	printf("obrazB Saved as B.ppm\n");
-	//========================================================
+    imgA.Save("ResultA.ppm");
+    imgB.Save("ResultB.ppm");
 
-	PPMImage PPMImageA;
-	PPMImageA.Read("A.ppm");
-	printf("A.ppm Read\n");
-	PPMImage PPMImageB;
-	PPMImageB.Read("B.ppm");
-	printf("B.ppm Read\n");
+    
+    // Load PPMImage image
+    CImg<unsigned char> PPMImageb("ResultB.ppm");
+    // Save as 
+    PPMImageb.save("C.png");
+    printf("====== C.png Saved ======\n");
+    //========================================================
 
-	//========================================================
-	PPMImage* PointerImageA = &PPMImageA;
-	PPMImage* PointerImageB = &PPMImageB;
+    auto end = std::chrono::high_resolution_clock::now();
+    std::cout << "Execution time: " << std::chrono::duration<float, std::milli>(end - start).count() << " ms" << std::endl;
 
-	if (PointerImageA == nullptr || PointerImageB == nullptr) return 0;
 
-	if (!(PointerImageA->GetHeight() == PointerImageB->GetHeight() && PointerImageA->GetWidth() == PointerImageB->GetWidth()))
-	{
-		printf("Image Sizes are different! Resizing.\n");
-	}
-	if (PointerImageA->GetHeight() > PointerImageB->GetHeight() && PointerImageA->GetWidth() > PointerImageB->GetWidth())
-	{
-		// Resize the Image A:
-		PPMImageA.Resize(PointerImageB->GetHeight(), PointerImageB->GetWidth());
-		PPMImageA.Save("ResultA.ppm");
 
-		printf("ResultA.ppm Resized\n");
-	}
-	else
-	{
-		// Resize the Image B:
-		PPMImageB.Resize(PointerImageA->GetHeight(), PointerImageA->GetWidth());
-		PPMImageB.Save("ResultB.ppm");
-
-		printf("ResultB.ppm Resized\n");
-		printf("\n");
-	}
-
-	//================================================================================================================
-	//								ASYNC LOADING
-	//================================================================================================================
-	printf("Loading asynchronously:\n");
-	printf("Pixels of Picture A and B into Arrays and sorting by luminance each one...\n");
-	const auto result1 = std::async(std::launch::async, &PPMImage::AddLuminancePositionAndSortArray, &PPMImageA);
-	const auto result2 = std::async(std::launch::async, &PPMImage::AddLuminancePositionAndSortArray, &PPMImageB);
-	result1._Get_value();
-	result2._Get_value();
-
-	// With or Without Counting Pixels
-#if TurnOnOffCountingPixels
-	const auto result3 = std::async(std::launch::async, &PPMImage::CountAllPixelsAndUniqeRGB, &PPMImageA);
-	const auto result4 = std::async(std::launch::async, &PPMImage::CountAllPixelsAndUniqeRGB, &PPMImageB);
-#endif
-
-	printf("Setting up Positions and Colors into the Map...It takes a min or two...\n");
-	const auto result5 = std::async(std::launch::async, &PPMImage::UpdatePixelsFromTheOrigin, &PPMImageB, PointerImageA, PointerImageB);
-	printf("Counting Unique Colors...\n");
-#if TurnOnOffCountingPixels
-	printf("\n");
-	printf("Number Of All Unique Colors of Picture A:\n");
-	result3._Get_value();
-	printf("Number Of All Unique Colors of Picture B:\n");
-	result4._Get_value();
-	printf("\n");
-#endif
-	result5._Get_value();
-	//================================================================================================================
-
-	PPMImageB.SetUpdatedPixelRGBInCorrectPositions();
-	printf("\nSaving Results...\n");
-	PPMImageA.Save("ResultA.ppm");
-	PPMImageB.Save("ResultB.ppm");
-	printf("\nResultA.PPMImage and ResultB.ppm Saved\n");
-	//========================================================
-	// Load PPMImage image
-	CImg<unsigned char> PPMImageb("ResultB.ppm");
-	// Save as 
-	PPMImageb.save("C.png");
-	printf("====== C.png Saved ======\n");
-	//========================================================
-	// Deleting temp files
-	if (remove("ResultA.PPM") != 0)
-	{
-		perror("Error deleting file");
-	}
-	else
-	{
-		puts("ResultA.PPM File successfully deleted");
-	}
-	if (remove("ResultB.PPM") != 0)
-	{
-		perror("Error deleting file");
-	}
-	else
-	{
-		puts("ResultB.PPM File successfully deleted");
-	}
-	if (remove("A.PPM") != 0)
-	{
-		perror("Error deleting file");
-	}
-	else
-	{
-		puts("A.PPM File successfully deleted");
-	}
-	if (remove("B.PPM") != 0)
-	{
-		perror("Error deleting file");
-	}
-	else
-	{
-		puts("B.PPMImage File successfully deleted");
-	}
-
-	return 0;
+    return 0;
 }
