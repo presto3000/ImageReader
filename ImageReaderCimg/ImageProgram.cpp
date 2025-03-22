@@ -1,4 +1,5 @@
-﻿//Copyright 2022 Chris Pawłowski
+﻿
+//Copyright 2022 Chris Pawłowski
 
 #include "CImg.h"
 #include <fstream>
